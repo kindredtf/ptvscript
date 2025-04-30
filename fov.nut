@@ -1,39 +1,34 @@
 
-::EnumerateTable <- function(table) {
-    printl("{");
-    foreach (key, value in table) {
-        printl("    " + key + ": " + value);
-    }
-    printl("}")
-}
-
-
-    if(!("g_playerFOV" in getroottable()))
+if(!("g_playerFOV" in getroottable()))
     {
         ::g_playerFOV <- {}
         printl("No g_playerFOV table found. Initializing.")
     }
 
 
-
-
-::CollectEventsInScope <- function(events)
+::DebugPrint <- function(msg) 
 {
-    local events_id = UniqueString()
-    getroottable()[events_id] <- events
-    local events_table = getroottable()[events_id]
-    foreach (name, callback in events) events_table[name] = callback.bindenv(this)
-    local cleanup_user_func, cleanup_event = "OnGameEvent_scorestats_accumulated_update"
-    if (cleanup_event in events) cleanup_user_func = events[cleanup_event].bindenv(this)
-    events_table[cleanup_event] <- function(params)
-    {
-        if (cleanup_user_func) cleanup_user_func(params)
-        delete getroottable()[events_id]
-    }
-    __CollectGameEventCallbacks(events_table)
+    printl("[VScript Debug] " + msg);
 }
 
-CollectEventsInScope({
+::GetSteamID <- function(player) 
+{
+    local steamID = NetProps.GetPropString(player, "m_szNetworkIDString")
+    if (steamID != null)
+    {
+        return steamID
+    }
+}
+
+::SetPlayerFOV <- function(player, fov)
+{
+    if (!player || !player.IsValid())
+        return;
+    
+    NetProps.SetPropInt(player, "m_iFOV", fov);
+}
+
+::CollectEvents <- {
     OnGameEvent_teamplay_round_start = function(params)
     {
         local player = null
@@ -47,9 +42,7 @@ CollectEventsInScope({
                 DebugPrint("Restored FOV " + g_playerFOV[steamID] + " for player " + player)
             }
         }
-
     }
-
     OnGameEvent_player_spawn = function(params)
     {
         if (!("userid" in params))
@@ -115,28 +108,12 @@ CollectEventsInScope({
             }
         }
     }
-
-})
-
-::DebugPrint <- function(msg) 
-{
-    printl("[VScript Debug] " + msg);
 }
 
-::GetSteamID <- function(player) 
-{
-    local steamID = NetProps.GetPropString(player, "m_szNetworkIDString")
-    if (steamID != null)
-    {
-        return steamID
-    }
-}
+EntFireByHandle(
+    Entities.FindByClassname(null, "worldspawn"),
+    "RunScriptCode",
+    "::__CollectGameEventCallbacks(CollectEvents)",
+    1, null, null);
 
-::SetPlayerFOV <- function(player, fov)
-{
-    if (!player || !player.IsValid())
-        return;
-    
-    NetProps.SetPropInt(player, "m_iFOV", fov);
-}
 
