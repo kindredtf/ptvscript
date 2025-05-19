@@ -1,0 +1,149 @@
+local RADIUS = 500; // hu
+local HEAL_DELAY = 0.5; // s
+local HEAL_AMOUNT = 5; // hp
+local GOAL_HEIGHT_LIMIT_OFFSET = 196; // hu
+
+local function log(s) {
+    printl("[Passtime Goal Heal] " + s)
+}
+
+
+local teamNames = {
+    [2] = "RED",
+    [3] = "BLU",
+};
+
+local function GetTeamName(team) {
+    return teamNames[team];
+}
+
+local oppositeTeam = {
+    [2] = 3,
+    [3] = 2
+}
+
+local function GetOppositeTeam(team) {
+    if (!(team in oppositeTeam)) return team;
+    return oppositeTeam[team];
+}
+
+// How in the actual fuck is there no min function in the base library?
+local function min(a, b) {
+    if (a < b) {
+        return a;
+    } else {
+        return b;
+    }
+}
+
+local function HealPlayer(player, value) {
+    player.SetHealth(min(player.GetHealth() + value, player.GetMaxHealth()));
+}
+
+
+log("Script executed!");
+
+if (!("g_ptHeal" in getroottable())) {
+    ::g_ptHeal <- {
+        running = true,
+        goals = {},
+    };
+
+    log("Initializing.");
+}
+
+
+::PassTimeGoalHealThink <- function() {
+    // log("tick!");
+
+    local maxPlayers = MaxClients().tointeger();
+    for (local i = 1; i <= maxPlayers; i++) {
+        local player = PlayerInstanceFromIndex(i);
+        if (player == null) continue;
+        local team = player.GetTeam();
+        if (!(team in g_ptHeal["goals"])) {
+            continue;
+        }
+
+        local goal = g_ptHeal["goals"][team];
+
+        local goalPosition = goal.GetCenter();
+        local playerPosition = player.GetCenter();
+
+        local distSqr = (playerPosition - goalPosition).Length2DSqr();
+        local verticalDiff = playerPosition.z - goalPosition.z;
+        if (distSqr < RADIUS * RADIUS && verticalDiff < GOAL_HEIGHT_LIMIT_OFFSET) {
+            HealPlayer(player, HEAL_AMOUNT);
+        }
+    }
+
+    return HEAL_DELAY;
+}
+
+
+local function StartThink() {
+    // Collect all goals
+    g_ptHeal["goals"] <- {};
+    for (local goal; goal = Entities.FindByClassname(goal, "func_passtime_goal");) {
+        // Opposite, bcs goal teams are swapped..?
+        local team = GetOppositeTeam(goal.GetTeam());
+        if (team in g_ptHeal["goals"]) {
+            log(format("More than one goal detected for %s, script might not work correctly!", teamNames[team]));
+        }
+        g_ptHeal["goals"][team] <- goal;
+        log(format("Found goal, team: %s (%d)", teamNames[team], team));
+    }
+
+    if (!(("thinker" in g_ptHeal) && g_ptHeal["thinker"].IsValid())) {
+        g_ptHeal["thinker"] <- Entities.CreateByClassname("logic_relay");
+    }
+
+    AddThinkToEnt(g_ptHeal["thinker"], "PassTimeGoalHealThink");
+}
+
+
+StartThink();
+PassTimeHealEvents <- {
+    OnGameEvent_round_start = function(params) {
+        // log("round_start!");
+        StartThink();
+    }
+
+    OnGameEvent_scorestats_accumulated_reset = function(params) {
+        // log("scorestats_accumulated_reset!");
+        StartThink();
+    }
+
+    OnGameEvent_teamplay_round_start = function(params) {
+        // log("teamplay_round_start!");
+        StartThink();
+    }
+
+    OnGameEvent_teamplay_waiting_begins = function(params) {
+        // log("teamplay_waiting_begins!");
+        StartThink();
+    }
+
+    OnGameEvent_teamplay_setup_finished = function(params) {
+        // log("teamplay_setup_finished!");
+        StartThink();
+    }
+
+    OnGameEvent_teamplay_round_active = function(params) {
+        // log("teamplay_round_active!");
+        StartThink();
+    }
+
+    OnGameEvent_teamplay_restart_round = function(params) {
+        // log("teamplay_restart_round!");
+        StartThink();
+    }
+
+    OnGameEvent_teamplay_ready_restart = function(params) {
+        // log("teamplay_ready_restart!");
+        StartThink();
+    }
+}
+
+
+__CollectGameEventCallbacks(PassTimeHealEvents);
