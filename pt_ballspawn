@@ -1,0 +1,190 @@
+// Relative to goal
+local DISTANCE_TOWARDS_CENTER = 300; // hu
+local BALL_SPAWN_VERTICAL_OFFSET = -300; // hu
+local BALL_SPAWN_VERTICAL_VELOCITY = 500; // hu/s
+local BALL_REPEL_RADIUS = 150; // hu
+local BALL_REPEL_SPEED = 800; // hu/s
+local BALL_PROJECTILE_SHIELD_RADIUS = 180; // hu
+
+
+local function log(s) {
+    printl("[Passtime Ball Spawner] " + s)
+}
+
+
+log("Script executed!");
+
+if (!("g_ptBallSpawn" in getroottable())) {
+    ::g_ptBallSpawn <- {
+        spawnPositions = {},
+        ballSpawnTime = -10000,
+    };
+
+    log("Initializing.");
+}
+
+
+
+local oppositeTeam = {
+    [2] = 3,
+    [3] = 2
+}
+
+local function GetOppositeTeam(team) {
+    if (!(team in oppositeTeam)) return team;
+    return oppositeTeam[team];
+}
+
+
+local function RecalculateBallSpawns() {
+    local goals = {};
+    for (local goal; goal = Entities.FindByClassname(goal, "func_passtime_goal");) {
+        // Opposite, bcs goal teams are swapped..?
+        local team = GetOppositeTeam(goal.GetTeam());
+        goals[team] <- goal;
+    }
+
+    if (!(2 in goals) || !(3 in goals)) {
+        log("Goals fucked up, idk.")
+        return;
+    }
+
+    local redGoalPos = goals[2].GetCenter();
+    local bluGoalPos = goals[3].GetCenter();
+
+    local dirRedToBlu = bluGoalPos - redGoalPos;
+    dirRedToBlu.Norm();
+
+    local redPosition = redGoalPos + dirRedToBlu * DISTANCE_TOWARDS_CENTER;
+    local bluPosition = bluGoalPos - dirRedToBlu * DISTANCE_TOWARDS_CENTER;
+    redPosition.z += BALL_SPAWN_VERTICAL_OFFSET;
+    bluPosition.z += BALL_SPAWN_VERTICAL_OFFSET;
+
+    g_ptBallSpawn["spawnPositions"][2] <- redPosition;
+    g_ptBallSpawn["spawnPositions"][3] <- bluPosition;
+}
+
+g_ptBallSpawn["ballPriorityTeam"] <- 0;
+
+
+::BallRepel <- function() {
+    if (Time() - g_ptBallSpawn["ballSpawnTime"] > 5.0) return;
+
+    local ball = g_ptBallSpawn["ball"];
+    if (!ball.IsValid()) { return; }
+
+    if (!(g_ptBallSpawn["ballPriorityTeam"] in g_ptBallSpawn["spawnPositions"])) return;
+    local repelledTeam = GetOppositeTeam(g_ptBallSpawn["ballPriorityTeam"]);
+
+    local ballPos = ball.GetCenter();
+    local ballVel = ball.GetVelocity();
+
+
+    for (local i = 1; i <= MaxClients().tointeger() ; i++) {
+        local player = PlayerInstanceFromIndex(i);
+        if (player == null) continue;
+
+        local team = player.GetTeam();
+        if (team != repelledTeam) continue;
+
+        local playerPos = player.GetCenter();
+        local dir = playerPos - ballPos;
+        local dist = dir.Length();
+
+        if (dist > BALL_REPEL_RADIUS) continue;
+        dir.Norm();
+        if (dir.z < 0.0) dir.z = 0.0;
+        dir.Norm();
+
+        local velDot = ballVel.Dot(dir);
+        if (velDot < 0.0) velDot = 0.0;
+        local extraVelocity = dir * velDot * 0.5;
+        local velocity = dir * BALL_REPEL_SPEED + extraVelocity;
+        player.Teleport(false, Vector(), false, QAngle(), true, velocity);
+    }
+
+    for (local projectile; projectile = Entities.FindByClassname(projectile, "tf_projectile_*");) {
+        local team = projectile.GetTeam();
+        if (team != repelledTeam) continue;
+
+        local distSqr = (projectile.GetCenter() - ballPos).LengthSqr();
+        if (distSqr > BALL_PROJECTILE_SHIELD_RADIUS * BALL_PROJECTILE_SHIELD_RADIUS) continue;
+
+        projectile.Destroy();
+    }
+}
+
+function PassTimeBallRepelThink() {
+    BallRepel();
+    return -1;
+}
+
+
+local function TeleportBall(ball) {
+    // Keep neutral spawn
+    if (!(g_ptBallSpawn["ballPriorityTeam"] in g_ptBallSpawn["spawnPositions"])) return;
+
+    local position = g_ptBallSpawn["spawnPositions"][g_ptBallSpawn["ballPriorityTeam"]];
+    local velocity = Vector(0.0, 0.0, BALL_SPAWN_VERTICAL_VELOCITY);
+    ball.Teleport(true, position, false, QAngle(), true, velocity);
+
+    g_ptBallSpawn["ball"] <- ball;
+    g_ptBallSpawn["ballSpawnTime"] <- Time();
+}
+
+
+local function Setup() {
+    RecalculateBallSpawns();
+
+    if (!(("thinker" in g_ptBallSpawn) && g_ptBallSpawn["thinker"].IsValid())) {
+        g_ptBallSpawn["thinker"] <- Entities.CreateByClassname("logic_relay");
+    }
+
+    AddThinkToEnt(g_ptBallSpawn["thinker"], "PassTimeBallRepelThink");
+}
+
+
+PassTimeBallSpawnEvents <- {
+    OnGameEvent_teamplay_broadcast_audio = function(params) {
+        // log("teamplay_broadcast_audio!");
+
+        if (params["sound"] == "Passtime.BallSpawn") {
+            for (local entity; entity = Entities.FindByClassname(entity, "passtime_ball");) {
+                TeleportBall(entity);
+                return;
+            }
+        }
+    }
+
+    OnGameEvent_pass_score = function(params) {
+        local scorer = EntIndexToHScript(params["scorer"]);
+        local team = scorer.GetTeam();
+        g_ptBallSpawn["ballPriorityTeam"] <- GetOppositeTeam(team);
+    }
+
+    OnGameEvent_pass_free = function(params) {
+        g_ptBallSpawn["ballPriorityTeam"] <- 0;
+    }
+
+    OnGameEvent_pass_get = function(params) {
+        g_ptBallSpawn["ballPriorityTeam"] <- 0;
+        g_ptBallSpawn["ballSpawnTime"] <- -10000;
+    }
+
+    OnGameEvent_teamplay_restart_round = function(params) {
+        Setup();
+        g_ptBallSpawn["ballPriorityTeam"] <- 0;
+    }
+
+    OnGameEvent_teamplay_setup_finished = function(params) {
+        Setup();
+        g_ptBallSpawn["ballPriorityTeam"] <- 0;
+    }
+}
+
+Setup()
+
+__CollectGameEventCallbacks(PassTimeBallSpawnEvents);
+
+
+
